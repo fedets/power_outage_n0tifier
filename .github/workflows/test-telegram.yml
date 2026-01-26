@@ -7,19 +7,22 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Debug - print environment (safe)
+      - name: Debug - check secrets
         env:
           BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
           if [ -z "$BOT_TOKEN" ]; then echo "❌ BOT_TOKEN not found"; exit 1; fi
           if [ -z "$CHAT_ID" ]; then echo "❌ CHAT_ID not found"; exit 1; fi
-          echo "✅ Secrets are loaded (hidden values not printed)."
+          echo "✅ Secrets are loaded successfully."
 
-      - name: Send test message
+      - name: Send test message to Telegram
         env:
           BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
           echo "Sending test message to Telegram..."
-          curl -v -X POST "https://api.telegram.o
+          curl -v -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${CHAT_ID}" \
+            --data-urlencode "text=Test message from GitHub Actions ✅"
+          echo "✅ Telegram request sent."
