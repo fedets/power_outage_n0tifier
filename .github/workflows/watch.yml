@@ -71,7 +71,7 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          URL: "https://example.com/page-to-watch"
+          URL: "https://voe-poweron.inneti.net/schedule_queues"
         run: |
           echo "🚨 Website changed, sending alert..."
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
@@ -87,7 +87,7 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          URL: "https://example.com/page-to-watch"
+          URL: "https://voe-poweron.inneti.net/schedule_queues"
         run: |
           echo "✅ No changes detected, sending calm message..."
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
