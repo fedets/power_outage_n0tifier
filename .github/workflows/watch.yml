@@ -22,7 +22,7 @@ jobs:
       - name: Take screenshot and save HTML
         id: screenshot
         env:
-          URL: "https://example.com/page-to-watch"
+          URL: "https://voe-poweron.inneti.net/schedule_queues"
         run: |
           node - <<'EOF'
           const { chromium } = require('playwright');
@@ -80,18 +80,6 @@ jobs:
             -F chat_id="${CHAT_ID}" \
             -F photo="@page.png"
           echo "${NEW_HASH}" > saved/prev.hash
-
-      - name: Send Telegram — no changes
-        if: env.PREV_HASH != '' && env.NEW_HASH == env.PREV_HASH
-        env:
-          BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          URL: "https://example.com/page-to-watch"
-        run: |
-          echo "✅ No changes detected, sending calm message..."
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${CHAT_ID}" \
-            --data-urlencode "text=✅ No changes detected on ${URL} — still looks the same 💤"
 
       - name: Save new hash
         uses: actions/cache@v4
