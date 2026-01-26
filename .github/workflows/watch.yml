@@ -2,12 +2,13 @@ name: Watch site and send screenshot
 
 on:
   schedule:
-    - cron: '*/15 * * * *'   # every 5 minutes
-  workflow_dispatch:        # manual trigger
+    - cron: '*/30 * * * *'   # every 5 minutes
+  workflow_dispatch:        # allow manual trigger
 
 jobs:
   watch:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -21,7 +22,7 @@ jobs:
       - name: Take screenshot and save HTML
         id: screenshot
         env:
-          URL: "https://voe-poweron.inneti.net/schedule_queues"
+          URL: "https://example.com/page-to-watch"
         run: |
           node - <<'EOF'
           const { chromium } = require('playwright');
@@ -59,31 +60,40 @@ jobs:
           fi
           echo "PREV_HASH=$PREV_HASH" >> $GITHUB_ENV
 
-      - name: Send Telegram message & screenshot if changed
-        if: env.NEW_HASH != env.PREV_HASH
+      - name: Debug hash values
+        run: |
+          echo "Previous hash: $PREV_HASH"
+          echo "New hash: $NEW_HASH"
+
+      - name: Send Telegram — site changed
+        if: env.PREV_HASH == '' || env.NEW_HASH != env.PREV_HASH
         env:
           BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          URL: "https://example.com/page-to-watch"
         run: |
+          echo "🚨 Website changed, sending alert..."
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -d chat_id="${CHAT_ID}" \
-            -d text="🚨 Website changed!\n\n${{ env.URL }}" >/dev/null
+            -d "chat_id=${CHAT_ID}" \
+            --data-urlencode "text=🚨 Website changed!\n\n${URL}"
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto" \
             -F chat_id="${CHAT_ID}" \
-            -F photo="@page.png" >/dev/null
+            -F photo="@page.png"
           echo "${NEW_HASH}" > saved/prev.hash
 
-      - name: Send Telegram message — no changes
-        if: env.NEW_HASH == env.PREV_HASH
+      - name: Send Telegram — no changes
+        if: env.PREV_HASH != '' && env.NEW_HASH == env.PREV_HASH
         env:
           BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          URL: "https://example.com/page-to-watch"
         run: |
+          echo "✅ No changes detected, sending calm message..."
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -d chat_id="${CHAT_ID}" \
-            -d text="✅ No changes detected on ${{ env.URL }} (still the same 💤)" >/dev/null
+            -d "chat_id=${CHAT_ID}" \
+            --data-urlencode "text=✅ No changes detected on ${URL} — still looks the same 💤"
 
-      - name: Save new hash for next run
+      - name: Save new hash
         uses: actions/cache@v4
         with:
           path: saved
