@@ -2,7 +2,7 @@ name: Watch site and send screenshot
 
 on:
   schedule:
-    - cron: '*/30 * * * *'   # every 5 minutes
+    - cron: '*/15 * * * *'   # every 5 minutes
   workflow_dispatch:        # manual trigger
 
 jobs:
@@ -72,6 +72,16 @@ jobs:
             -F chat_id="${CHAT_ID}" \
             -F photo="@page.png" >/dev/null
           echo "${NEW_HASH}" > saved/prev.hash
+
+      - name: Send Telegram message — no changes
+        if: env.NEW_HASH == env.PREV_HASH
+        env:
+          BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            -d text="✅ No changes detected on ${{ env.URL }} (still the same 💤)" >/dev/null
 
       - name: Save new hash for next run
         uses: actions/cache@v4
