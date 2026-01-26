@@ -1,0 +1,80 @@
+name: Watch site and send screenshot
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'   # every 5 minutes
+  workflow_dispatch:        # manual trigger
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Playwright
+        run: |
+          npm init -y
+          npm i playwright@latest
+          npx playwright install --with-deps chromium
+
+      - name: Take screenshot and save HTML
+        id: screenshot
+        env:
+          URL: "https://voe-poweron.inneti.net/schedule_queues"
+        run: |
+          node - <<'EOF'
+          const { chromium } = require('playwright');
+          const fs = require('fs');
+          (async () => {
+            const browser = await chromium.launch();
+            const page = await browser.newPage();
+            await page.goto(process.env.URL, { waitUntil: 'networkidle' });
+            await page.screenshot({ path: 'page.png', fullPage: true });
+            const html = await page.content();
+            fs.writeFileSync('page.html', html);
+            await browser.close();
+          })();
+          EOF
+
+      - name: Compute new hash
+        run: |
+          md5sum page.html > new.hash
+          echo "NEW_HASH=$(cut -d' ' -f1 new.hash)" >> $GITHUB_ENV
+
+      - name: Load previous hash
+        uses: actions/cache@v4
+        id: cache
+        with:
+          path: saved
+          key: site-watcher
+
+      - name: Prepare previous hash
+        run: |
+          mkdir -p saved
+          if [ -f saved/prev.hash ]; then
+            PREV_HASH=$(cat saved/prev.hash)
+          else
+            PREV_HASH=""
+          fi
+          echo "PREV_HASH=$PREV_HASH" >> $GITHUB_ENV
+
+      - name: Send Telegram message & screenshot if changed
+        if: env.NEW_HASH != env.PREV_HASH
+        env:
+          BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            -d text="🚨 Website changed!\n\n${{ env.URL }}" >/dev/null
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto" \
+            -F chat_id="${CHAT_ID}" \
+            -F photo="@page.png" >/dev/null
+          echo "${NEW_HASH}" > saved/prev.hash
+
+      - name: Save new hash for next run
+        uses: actions/cache@v4
+        with:
+          path: saved
+          key: site-watcher
