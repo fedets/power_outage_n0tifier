@@ -31,6 +31,7 @@ jobs:
             const browser = await chromium.launch();
             const page = await browser.newPage();
             await page.goto(process.env.URL, { waitUntil: 'networkidle' });
+            await page.waitForTimeout(10000)
             await page.screenshot({ path: 'page.png', fullPage: true });
             const html = await page.content();
             fs.writeFileSync('page.html', html);
