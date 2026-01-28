@@ -2,8 +2,11 @@ name: Watch site and send screenshot
 
 on:
   schedule:
-    - cron: '*/30 * * * *'   # Runs every 30 mins (GitHub may delay this further)
+    - cron: '0 * * * *'     # Runs at the start of every hour
   workflow_dispatch:        # Manual run button
+
+permissions:
+  contents: write
 
 jobs:
   watch:
@@ -18,7 +21,6 @@ jobs:
         with:
           node-version: 20
 
-      # 1. CACHE NODE MODULES
       - name: Cache Node Modules
         id: cache-npm
         uses: actions/cache@v4
@@ -32,7 +34,6 @@ jobs:
           npm init -y
           npm i playwright@latest
 
-      # 2. CACHE PLAYWRIGHT BROWSERS
       - name: Get Playwright version
         id: playwright-version
         run: echo "version=$(npx playwright --version | cut -d' ' -f2)" >> $GITHUB_OUTPUT
@@ -48,15 +49,14 @@ jobs:
         if: steps.cache-playwright.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
 
-      # 3. RESTORE SITE HASH (Fix for Cache Immutability)
-      - name: Load previous hash
+      # --- IMPROVED HASH LOGIC ---
+      - name: Restore Previous Hash
         uses: actions/cache/restore@v4
-        id: hash-restore
         with:
           path: saved
-          key: site-watcher-${{ github.run_id }}
+          key: site-hash-${{ github.run_id }} # This will fail to find an exact match
           restore-keys: |
-            site-watcher-
+            site-hash-                      # This grabs the most recent "site-hash-" it finds
 
       - name: Take screenshot and check for changes
         env:
@@ -70,7 +70,7 @@ jobs:
             const page = await browser.newPage();
             try {
               await page.goto(process.env.URL, { waitUntil: 'networkidle', timeout: 60000 });
-              await page.waitForTimeout(5000); // Small buffer for dynamic content
+              await page.waitForTimeout(5000); 
               await page.screenshot({ path: 'page.png', fullPage: true });
               const html = await page.content();
               fs.writeFileSync('page.html', html);
@@ -95,9 +95,10 @@ jobs:
           echo "NEW_HASH=$NEW_HASH" >> $GITHUB_ENV
           echo "PREV_HASH=$PREV_HASH" >> $GITHUB_ENV
           
-          # Only proceed to send if different
           if [ "$NEW_HASH" != "$PREV_HASH" ]; then
              echo "changed=true" >> $GITHUB_OUTPUT
+             # Update the local file so it gets saved to the NEW cache
+             echo "$NEW_HASH" > saved/prev.hash
           fi
 
       - name: Send Telegram — site changed
@@ -112,14 +113,11 @@ jobs:
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto" \
             -F chat_id="${CHAT_ID}" \
             -F photo="@page.png"
-          
-          # Update the hash file for the next run
-          echo "${{ env.NEW_HASH }}" > saved/prev.hash
 
-      # 4. SAVE SITE HASH
-      - name: Save new hash to cache
+      - name: Save New Hash to Cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: saved
-          key: site-watcher-${{ github.run_id }}
+          # Key includes run_number to ensure it is always unique and searchable
+          key: site-hash-${{ github.run_number }}
