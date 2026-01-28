@@ -2,8 +2,8 @@ name: Watch site and send screenshot
 
 on:
   schedule:
-    - cron: '*/30 * * * *'   # every 5 minutes
-  workflow_dispatch:        # allow manual trigger
+    - cron: '*/30 * * * *'   # Runs every 30 mins (GitHub may delay this further)
+  workflow_dispatch:        # Manual run button
 
 jobs:
   watch:
@@ -13,14 +13,52 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install Playwright
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 1. CACHE NODE MODULES
+      - name: Cache Node Modules
+        id: cache-npm
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('package.json') }}
+
+      - name: Install dependencies
+        if: steps.cache-npm.outputs.cache-hit != 'true'
         run: |
           npm init -y
           npm i playwright@latest
-          npx playwright install --with-deps chromium
 
-      - name: Take screenshot and save HTML
-        id: screenshot
+      # 2. CACHE PLAYWRIGHT BROWSERS
+      - name: Get Playwright version
+        id: playwright-version
+        run: echo "version=$(npx playwright --version | cut -d' ' -f2)" >> $GITHUB_OUTPUT
+
+      - name: Cache Playwright Browsers
+        id: cache-playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
+
+      - name: Install Playwright Browsers
+        if: steps.cache-playwright.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      # 3. RESTORE SITE HASH (Fix for Cache Immutability)
+      - name: Load previous hash
+        uses: actions/cache/restore@v4
+        id: hash-restore
+        with:
+          path: saved
+          key: site-watcher-${{ github.run_id }}
+          restore-keys: |
+            site-watcher-
+
+      - name: Take screenshot and check for changes
         env:
           URL: "https://voe-poweron.inneti.net/schedule_queues"
         run: |
@@ -30,72 +68,58 @@ jobs:
           (async () => {
             const browser = await chromium.launch();
             const page = await browser.newPage();
-            await page.goto(process.env.URL, { waitUntil: 'networkidle' });
-            await page.waitForTimeout(10000)
-            await page.screenshot({ path: 'page.png', fullPage: true });
-            const html = await page.content();
-            fs.writeFileSync('page.html', html);
-            await browser.close();
+            try {
+              await page.goto(process.env.URL, { waitUntil: 'networkidle', timeout: 60000 });
+              await page.waitForTimeout(5000); // Small buffer for dynamic content
+              await page.screenshot({ path: 'page.png', fullPage: true });
+              const html = await page.content();
+              fs.writeFileSync('page.html', html);
+            } finally {
+              await browser.close();
+            }
           })();
           EOF
 
-      - name: Compute new hash
-        run: |
-          md5sum page.html > new.hash
-          echo "NEW_HASH=$(cut -d' ' -f1 new.hash)" >> $GITHUB_ENV
-
-      - name: Load previous hash
-        uses: actions/cache@v4
-        id: cache
-        with:
-          path: saved
-          key: site-watcher
-
-      - name: Prepare previous hash
+      - name: Process Results & Compare
+        id: compare
         run: |
           mkdir -p saved
+          NEW_HASH=$(md5sum page.html | cut -d' ' -f1)
+          
           if [ -f saved/prev.hash ]; then
             PREV_HASH=$(cat saved/prev.hash)
           else
-            PREV_HASH=""
+            PREV_HASH="none"
           fi
-          echo "PREV_HASH=$PREV_HASH" >> $GITHUB_ENV
 
-      - name: Debug hash values
-        run: |
-          echo "Previous hash: $PREV_HASH"
-          echo "New hash: $NEW_HASH"
+          echo "NEW_HASH=$NEW_HASH" >> $GITHUB_ENV
+          echo "PREV_HASH=$PREV_HASH" >> $GITHUB_ENV
+          
+          # Only proceed to send if different
+          if [ "$NEW_HASH" != "$PREV_HASH" ]; then
+             echo "changed=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Send Telegram — site changed
-        if: env.PREV_HASH == '' || env.NEW_HASH != env.PREV_HASH
+        if: env.NEW_HASH != env.PREV_HASH
         env:
           BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          URL: "https://voe-poweron.inneti.net/schedule_queues"
         run: |
-          echo "🚨 Website changed, sending alert..."
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -d "chat_id=${CHAT_ID}" \
-            --data-urlencode "text=🚨 Website changed!\n\n${URL}"
+            --data-urlencode "text=🚨 Website changed! Check it here: https://voe-poweron.inneti.net/schedule_queues"
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto" \
             -F chat_id="${CHAT_ID}" \
             -F photo="@page.png"
-          echo "${NEW_HASH}" > saved/prev.hash
+          
+          # Update the hash file for the next run
+          echo "${{ env.NEW_HASH }}" > saved/prev.hash
 
-      - name: Send Telegram — no changes
-        if: env.PREV_HASH != '' && env.NEW_HASH == env.PREV_HASH
-        env:
-          BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          URL: "https://voe-poweron.inneti.net/schedule_queues"
-        run: |
-          echo "✅ No changes detected, sending calm message..."
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${CHAT_ID}" \
-            --data-urlencode "text=✅ No changes detected on ${URL} — still looks the same 💤"
-
-      - name: Save new hash
-        uses: actions/cache@v4
+      # 4. SAVE SITE HASH
+      - name: Save new hash to cache
+        if: always()
+        uses: actions/cache/save@v4
         with:
           path: saved
-          key: site-watcher
+          key: site-watcher-${{ github.run_id }}
